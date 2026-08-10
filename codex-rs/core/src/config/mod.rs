@@ -29,6 +29,7 @@ use codex_config::config_toml::DEFAULT_PROJECT_DOC_MAX_BYTES;
 use codex_config::config_toml::ProjectConfig;
 use codex_config::config_toml::RealtimeAudioConfig;
 use codex_config::config_toml::RealtimeConfig;
+use codex_config::config_toml::StreamRetryRule;
 use codex_config::config_toml::ThreadStoreToml;
 use codex_config::config_toml::validate_model_providers;
 use codex_config::loader::load_config_layers_state;
@@ -637,6 +638,9 @@ pub struct Config {
 
     /// Info needed to make an API request to the model.
     pub model_provider: ModelProviderInfo,
+
+    /// Ordered retry overrides for transient Responses stream errors.
+    pub stream_retry_rules: Vec<StreamRetryRule>,
 
     /// Optionally specify the personality of the model
     pub personality: Option<Personality>,
@@ -4155,6 +4159,7 @@ impl Config {
                 .unwrap_or_default(),
             model_provider_id,
             model_provider,
+            stream_retry_rules: cfg.stream_retry_rules,
             cwd: resolved_cwd,
             workspace_roots: workspace_roots.clone(),
             workspace_roots_explicit,

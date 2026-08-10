@@ -8,6 +8,7 @@ use crate::session::turn_context::TurnContext;
 use crate::util::backoff;
 use codex_client::RetryOperation;
 use codex_features::Feature;
+use codex_config::config_toml::StreamRetryRule;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::protocol::EventMsg;
@@ -16,6 +17,7 @@ use tracing::warn;
 
 const INITIAL_CONNECTION_RETRY_DELAY: Duration = Duration::from_secs(5);
 const MAX_CONNECTION_RETRY_DELAY: Duration = Duration::from_secs(60);
+const MAX_CONFIGURED_STREAM_RETRIES: u64 = 100;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ResponsesStreamRequest {
@@ -36,6 +38,72 @@ impl Default for ResponsesStreamRetryState {
             connection_retries: 0,
             connection_retry_delay: INITIAL_CONNECTION_RETRY_DELAY,
         }
+    }
+}
+
+/// Returns the retry limit for an error, or `None` when it must remain terminal.
+/// Rules can tune only errors that are already classified as transient. This
+/// prevents a broad message rule from retrying authentication, quota, policy,
+/// invalid-request, or permission failures.
+pub(crate) fn retry_limit_for_response_stream_error(
+    rules: &[StreamRetryRule],
+    default_max_retries: u64,
+    err: &CodexErr,
+) -> Option<u64> {
+    if !err.is_retryable() {
+        return None;
+    }
+
+    if !rule_override_allowed(err) {
+        return Some(default_max_retries);
+    }
+
+    let error_code = retry_error_code(err);
+    let message = err.to_string().to_ascii_lowercase();
+    rules
+        .iter()
+        .find(|rule| retry_rule_matches(rule, error_code, &message))
+        .map_or(Some(default_max_retries), |rule| {
+            Some(rule.max_retries.min(MAX_CONFIGURED_STREAM_RETRIES))
+        })
+}
+
+fn retry_rule_matches(rule: &StreamRetryRule, error_code: &str, message: &str) -> bool {
+    rule.error_codes
+        .iter()
+        .map(|value| value.trim())
+        .any(|value| !value.is_empty() && value.eq_ignore_ascii_case(error_code))
+        || rule
+            .message_contains
+            .iter()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .any(|value| !value.is_empty() && message.contains(&value))
+}
+
+fn rule_override_allowed(err: &CodexErr) -> bool {
+    match err.details() {
+        CodexErrorDetails::UnexpectedStatus(error) => {
+            error.status.is_server_error() || matches!(error.status.as_u16(), 408 | 429)
+        }
+        _ => true,
+    }
+}
+
+fn retry_error_code(err: &CodexErr) -> &'static str {
+    match err.details() {
+        CodexErrorDetails::ServerOverloaded => "server_overloaded",
+        CodexErrorDetails::InternalServerError => "internal_server_error",
+        CodexErrorDetails::ResponseStreamFailed(_) => "response_stream_connection_failed",
+        CodexErrorDetails::ConnectionFailed(_) => "http_connection_failed",
+        CodexErrorDetails::UnexpectedStatus(_) => "http_status_code",
+        CodexErrorDetails::Stream(_) => "response_stream_disconnected",
+        CodexErrorDetails::RequestTimeout => "request_timeout",
+        CodexErrorDetails::Timeout => "timeout",
+        CodexErrorDetails::InternalAgentDied => "internal_agent_died",
+        CodexErrorDetails::Io(_) => "io",
+        CodexErrorDetails::Json(_) => "json",
+        CodexErrorDetails::TokioJoin(_) => "tokio_join",
+        _ => "other",
     }
 }
 
@@ -82,7 +150,9 @@ pub(crate) async fn handle_retryable_response_stream_error(
         return Ok(());
     }
 
-    if retry_state.retries >= max_retries
+    if max_retries > 0
+        && !matches!(err.details(), CodexErrorDetails::ServerOverloaded)
+        && retry_state.retries >= max_retries
         && client_session.try_switch_fallback_transport(
             &turn_context.session_telemetry,
             turn_context.model_info(),

@@ -33,6 +33,7 @@ use crate::responses_metadata::CodexResponsesRequestKind;
 use crate::responses_retry::ResponsesStreamRequest;
 use crate::responses_retry::ResponsesStreamRetryState;
 use crate::responses_retry::handle_retryable_response_stream_error;
+use crate::responses_retry::retry_limit_for_response_stream_error;
 use crate::session::PreviousTurnSettings;
 use crate::session::TurnInput;
 use crate::session::session::Session;
@@ -1499,9 +1500,13 @@ async fn run_sampling_request(
             original_input = Some(prompt.input);
         }
 
-        if !err.is_retryable() {
+        let Some(max_retries) = retry_limit_for_response_stream_error(
+            &turn_context.config.stream_retry_rules,
+            max_retries,
+            &err,
+        ) else {
             return Err(err);
-        }
+        };
 
         handle_retryable_response_stream_error(
             &mut retry_state,

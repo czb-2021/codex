@@ -26,6 +26,7 @@ use crate::responses_metadata::CompactionTurnMetadata;
 use crate::responses_retry::ResponsesStreamRequest;
 use crate::responses_retry::ResponsesStreamRetryState;
 use crate::responses_retry::handle_retryable_response_stream_error;
+use crate::responses_retry::retry_limit_for_response_stream_error;
 use crate::session::session::Session;
 use crate::session::step_context::StepContext;
 use crate::session::turn_context::TurnContext;
@@ -401,8 +402,14 @@ async fn run_remote_compaction_request_v2(
 
         match result {
             Ok(compaction_output) => return Ok(compaction_output),
-            Err(err) if !err.is_retryable() => return Err(err),
             Err(err) => {
+                let Some(max_retries) = retry_limit_for_response_stream_error(
+                    &turn_context.config.stream_retry_rules,
+                    max_retries,
+                    &err,
+                ) else {
+                    return Err(err);
+                };
                 handle_retryable_response_stream_error(
                     &mut retry_state,
                     max_retries,

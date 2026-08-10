@@ -3542,6 +3542,38 @@
       },
       "type": "object"
     },
+    "StreamRetryRule": {
+      "additionalProperties": false,
+      "description": "Overrides the stream retry limit for matching transient model errors.",
+      "properties": {
+        "error_codes": {
+          "default": [],
+          "description": "Structured Codex error categories to match.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "max_retries": {
+          "description": "Number of retries for the first matching rule. Values above 100 are capped at 100.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "message_contains": {
+          "default": [],
+          "description": "Case-insensitive substrings to match against the rendered error message.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "max_retries"
+      ],
+      "type": "object"
+    },
     "SkillConfig": {
       "additionalProperties": false,
       "properties": {
@@ -6808,6 +6840,14 @@
         }
       ],
       "description": "Directory where Codex stores the SQLite state DB. Defaults to `$CODEX_SQLITE_HOME` when set. Otherwise uses `$CODEX_HOME`."
+    },
+    "stream_retry_rules": {
+      "default": [],
+      "description": "Ordered retry overrides for transient Responses stream errors.",
+      "items": {
+        "$ref": "#/definitions/StreamRetryRule"
+      },
+      "type": "array"
     },
     "suppress_unstable_features_warning": {
       "description": "Suppress warnings about unstable (under development) features.",

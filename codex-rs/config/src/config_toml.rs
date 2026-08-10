@@ -149,6 +149,22 @@ pub struct OrchestratorFeatureToml {
     pub enabled: Option<bool>,
 }
 
+/// Overrides the stream retry limit for matching transient model errors.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct StreamRetryRule {
+    /// Structured Codex error categories to match.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub error_codes: Vec<String>,
+
+    /// Case-insensitive substrings to match against the rendered error message.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub message_contains: Vec<String>,
+
+    /// Number of retries for the first matching rule. Values above 100 are capped at 100.
+    pub max_retries: u64,
+}
+
 /// Base config deserialized from ~/.codex/config.toml.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -160,6 +176,10 @@ pub struct ConfigToml {
 
     /// Provider to use from the model_providers map.
     pub model_provider: Option<String>,
+
+    /// Ordered retry overrides for transient Responses stream errors.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stream_retry_rules: Vec<StreamRetryRule>,
 
     /// Size of the context window for the model, in tokens.
     pub model_context_window: Option<i64>,
@@ -990,6 +1010,37 @@ mod tests {
                     .expect_err("idle timeout must be a nonnegative integer");
             assert!(error.to_string().contains("thread_unload_delay_secs"));
         }
+
+    #[test]
+    fn stream_retry_rules_deserialize_in_order() {
+        let config: ConfigToml = toml::from_str(
+            r#"
+[[stream_retry_rules]]
+error_codes = ["server_overloaded"]
+max_retries = 8
+
+[[stream_retry_rules]]
+message_contains = ["selected model is at capacity"]
+max_retries = 6
+"#,
+        )
+        .expect("stream retry rules should deserialize");
+
+        assert_eq!(
+            config.stream_retry_rules,
+            vec![
+                StreamRetryRule {
+                    error_codes: vec!["server_overloaded".to_string()],
+                    message_contains: Vec::new(),
+                    max_retries: 8,
+                },
+                StreamRetryRule {
+                    error_codes: Vec::new(),
+                    message_contains: vec!["selected model is at capacity".to_string()],
+                    max_retries: 6,
+                },
+            ]
+        );
     }
 
     #[test]

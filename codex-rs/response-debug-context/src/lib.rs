@@ -85,7 +85,7 @@ pub fn telemetry_api_error_message(error: &ApiError) -> String {
         ApiError::InvalidRequest { .. } => "invalid request".to_string(),
         ApiError::CyberPolicy { .. } => "cyber policy".to_string(),
         ApiError::MisalignmentPolicyViolation { .. } => "misalignment policy violation".to_string(),
-        ApiError::ServerOverloaded => "server overloaded".to_string(),
+        ApiError::ServerOverloaded { .. } => "server overloaded".to_string(),
     }
 }
 

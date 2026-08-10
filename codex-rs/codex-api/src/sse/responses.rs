@@ -446,7 +446,8 @@ pub fn process_responses_event(
                             .unwrap_or_else(|| "Invalid request.".to_string());
                         response_error = ApiError::InvalidRequest { message };
                     } else if is_server_overloaded_error(&error) {
-                        response_error = ApiError::ServerOverloaded;
+                        let delay = try_parse_retry_after(&error);
+                        response_error = ApiError::ServerOverloaded { delay };
                     } else {
                         let delay = try_parse_retry_after(&error);
                         let message = error.message.unwrap_or_default();
@@ -1144,6 +1145,22 @@ mod tests {
                 }
                 _ => panic!("unexpected events for {code}: {events:?}"),
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn server_overloaded_error_preserves_retry_delay() {
+        let raw_error = r#"{"type":"response.failed","sequence_number":3,"response":{"id":"resp_overloaded","object":"response","created_at":1755041560,"status":"failed","error":{"code":"server_is_overloaded","message":"Selected model is at capacity. Please try again in 2s."}}}"#;
+        let sse = format!("event: response.failed\ndata: {raw_error}\n\n");
+
+        let events = collect_events(&[sse.as_bytes()]).await;
+
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Err(ApiError::ServerOverloaded { delay }) => {
+                assert_eq!(*delay, Some(Duration::from_secs(2)));
+            }
+            other => panic!("unexpected event: {other:?}"),
         }
     }
 

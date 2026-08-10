@@ -38,7 +38,10 @@ pub fn map_api_error(err: ApiError) -> CodexErr {
             }
         }
         ApiError::Stream(msg) => CodexErr::Stream(msg),
-        ApiError::ServerOverloaded => CodexErr::ServerOverloaded,
+        ApiError::ServerOverloaded { delay } => match delay {
+            Some(delay) => CodexErr::ServerOverloaded.with_retry_delay(delay),
+            None => CodexErr::ServerOverloaded,
+        },
         ApiError::Api { status, message } => {
             let user_message = api_error_user_message(status, &message);
             CodexErr::UnexpectedStatus(UnexpectedResponseError {

@@ -41,7 +41,7 @@ pub enum ApiError {
         misalignment: Option<MisalignmentErrorDetails>,
     },
     #[error("server overloaded")]
-    ServerOverloaded,
+    ServerOverloaded { delay: Option<Duration> },
 }
 
 impl From<RateLimitError> for ApiError {

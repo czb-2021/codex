@@ -6,8 +6,19 @@ use pretty_assertions::assert_eq;
 
 #[test]
 fn map_api_error_maps_server_overloaded() {
-    let err = map_api_error(ApiError::ServerOverloaded);
+    let err = map_api_error(ApiError::ServerOverloaded { delay: None });
     assert!(matches!(err.details(), CodexErrorDetails::ServerOverloaded));
+}
+
+#[test]
+fn map_api_error_preserves_server_overloaded_retry_delay() {
+    let retry_delay = std::time::Duration::from_secs(17);
+    let err = map_api_error(ApiError::ServerOverloaded {
+        delay: Some(retry_delay),
+    });
+
+    assert!(matches!(err.details(), CodexErrorDetails::ServerOverloaded));
+    assert_eq!(err.retry_delay(), Some(retry_delay));
 }
 
 #[test]

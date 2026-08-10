@@ -1,9 +1,92 @@
 use super::ResponsesStreamRequest;
 use super::log_retry;
 use crate::session::tests::make_session_and_context;
+use codex_config::config_toml::StreamRetryRule;
 use codex_protocol::error::CodexErr;
 use std::time::Duration;
 use tracing_test::internal::MockWriter;
+
+fn rule(error_codes: &[&str], message_contains: &[&str], max_retries: u64) -> StreamRetryRule {
+    StreamRetryRule {
+        error_codes: error_codes.iter().map(ToString::to_string).collect(),
+        message_contains: message_contains.iter().map(ToString::to_string).collect(),
+        max_retries,
+    }
+}
+
+#[test]
+fn server_overloaded_uses_default_retry_limit() {
+    assert_eq!(
+        super::retry_limit_for_response_stream_error(&[], 5, &CodexErr::ServerOverloaded),
+        Some(5)
+    );
+}
+
+#[test]
+fn structured_error_code_overrides_retry_limit() {
+    let rules = [rule(&["server_overloaded"], &[], 8)];
+    assert_eq!(
+        super::retry_limit_for_response_stream_error(&rules, 5, &CodexErr::ServerOverloaded),
+        Some(8)
+    );
+}
+
+#[test]
+fn message_rule_matches_case_insensitively() {
+    let rules = [rule(&[], &["SELECTED MODEL IS AT CAPACITY"], 8)];
+    assert_eq!(
+        super::retry_limit_for_response_stream_error(&rules, 5, &CodexErr::ServerOverloaded),
+        Some(8)
+    );
+}
+
+#[test]
+fn zero_retry_rule_disables_overload_retry() {
+    let rules = [rule(&["server_overloaded"], &[], 0)];
+    assert_eq!(
+        super::retry_limit_for_response_stream_error(&rules, 5, &CodexErr::ServerOverloaded),
+        Some(0)
+    );
+}
+
+#[test]
+fn terminal_errors_cannot_be_enabled_by_message_rule() {
+    let rules = [rule(&[], &["quota exceeded"], 8)];
+    assert_eq!(
+        super::retry_limit_for_response_stream_error(&rules, 5, &CodexErr::QuotaExceeded),
+        None
+    );
+}
+
+#[test]
+fn first_matching_rule_wins() {
+    let rules = [
+        rule(&["server_overloaded"], &[], 2),
+        rule(&[], &["capacity"], 9),
+    ];
+    assert_eq!(
+        super::retry_limit_for_response_stream_error(&rules, 5, &CodexErr::ServerOverloaded),
+        Some(2)
+    );
+}
+
+#[test]
+fn configured_retry_limit_is_capped() {
+    let rules = [rule(&["server_overloaded"], &[], 101)];
+    assert_eq!(
+        super::retry_limit_for_response_stream_error(&rules, 5, &CodexErr::ServerOverloaded),
+        Some(100)
+    );
+}
+
+#[test]
+fn empty_selectors_do_not_match() {
+    let rules = [rule(&["  "], &[""], 9)];
+    assert_eq!(
+        super::retry_limit_for_response_stream_error(&rules, 5, &CodexErr::ServerOverloaded),
+        Some(5)
+    );
+}
 
 #[tokio::test]
 async fn sampling_retry_logs_stream_error_context() {
