@@ -1,0 +1,93 @@
+name: Build capacity-retry Codex (Windows x64)
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Optional GitHub Release tag, for example capacity-retry-2026-08-24"
+        required: false
+        type: string
+  push:
+    branches:
+      - feature/server-overloaded-retry
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows-x64:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Cargo build data
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: codex-rs
+
+      - name: Build patched Codex CLI
+        shell: pwsh
+        working-directory: codex-rs
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc -p codex-cli --bin codex
+
+      - name: Prepare release files
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $source = Join-Path $env:GITHUB_WORKSPACE "codex-rs\target\x86_64-pc-windows-msvc\release\codex.exe"
+          if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+              throw "Build output not found: $source"
+          }
+
+          $assetDirectory = Join-Path $env:RUNNER_TEMP "capacity-retry-assets"
+          New-Item -ItemType Directory -Force -Path $assetDirectory | Out-Null
+          $asset = Join-Path $assetDirectory "codex-capacity-retry-x86_64-pc-windows-msvc.exe"
+          Copy-Item -LiteralPath $source -Destination $asset -Force
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $asset).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText("$asset.sha256", "$hash  $([IO.Path]::GetFileName($asset))`r`n", [Text.UTF8Encoding]::new($false))
+          $metadata = [ordered]@{
+              repository = $env:GITHUB_REPOSITORY
+              commit = $env:GITHUB_SHA
+              runner = "windows-x64"
+              asset = [IO.Path]::GetFileName($asset)
+              sha256 = $hash
+          } | ConvertTo-Json -Depth 3
+          [IO.File]::WriteAllText((Join-Path $assetDirectory "build-metadata.json"), $metadata, [Text.UTF8Encoding]::new($false))
+          [IO.File]::AppendAllText($env:GITHUB_ENV, "ASSET_DIRECTORY=$assetDirectory`r`n", [Text.UTF8Encoding]::new($false))
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-capacity-retry-windows-x64-${{ github.sha }}
+          path: ${{ runner.temp }}/capacity-retry-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish optional GitHub Release
+        if: ${{ inputs.release_tag != '' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $assetDirectory = Join-Path $env:RUNNER_TEMP "capacity-retry-assets"
+          gh release create $env:RELEASE_TAG `
+            (Join-Path $assetDirectory "codex-capacity-retry-x86_64-pc-windows-msvc.exe") `
+            (Join-Path $assetDirectory "codex-capacity-retry-x86_64-pc-windows-msvc.exe.sha256") `
+            (Join-Path $assetDirectory "build-metadata.json") `
+            --repo $env:GITHUB_REPOSITORY `
+            --title "Codex capacity-retry $env:RELEASE_TAG" `
+            --notes "Prebuilt Windows x64 Codex CLI containing the capacity-retry branch." `
+            --target $env:GITHUB_SHA
