@@ -1010,6 +1010,7 @@ mod tests {
                     .expect_err("idle timeout must be a nonnegative integer");
             assert!(error.to_string().contains("thread_unload_delay_secs"));
         }
+    }
 
     #[test]
     fn stream_retry_rules_deserialize_in_order() {
